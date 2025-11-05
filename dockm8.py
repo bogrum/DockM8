@@ -29,7 +29,7 @@ parser = argparse.ArgumentParser(description='Parse required arguments')
 
 # Define command line arguments for the script
 parser.add_argument('--software', required=True, type=str, help ='Path to the software folder')
-parser.add_argument('--mode', type=str, default='single', choices=['Single', 'Ensemble', 'active_learning'], help ='Specifies the mode: single, ensemble, or active_learning')
+parser.add_argument('--mode', type=str, default='single', choices=['Single', 'Ensemble'], help ='Specifies the mode: single or ensemble')
 
 parser.add_argument('--gen_decoys', default=False, type=str2bool, help ='Whether or not to generate decoys using DeepCoy')
 parser.add_argument('--decoy_model', default='DUDE', type=str, choices=['DUDE', 'DEKOIS', 'DUDE_P'], help ='Model to use for decoy generation')
@@ -125,7 +125,7 @@ parser.add_argument('--consensus',
 parser.add_argument('--threshold',
                     type=float,
                     default=0.5,
-                    help='Threshold for ensemble and active_learning methods')
+                    help='Threshold for ensemble mode')
 
 # Parse arguments from command line
 args = parser.parse_args()
@@ -142,7 +142,7 @@ else:
         reffile = [args.reffile[0]]
 
 # Validate arguments based on the specified mode
-if args.mode == 'ensemble' or args.mode == 'active_learning' and not args.threshold:
+if args.mode == 'Ensemble' and not args.threshold:
     parser.error(
         f"Must specify a threshold when --mode is set to {args.mode} mode")
 
@@ -174,7 +174,7 @@ if args.gen_decoys == True and not args.actives:
 if args.gen_decoys and len(args.rescoring) > 8:
     # Warn about the large number of combinations that might be tried during optimization
     possibilites = math.factorial(len(args.rescoring)) * len(
-        args.clustering_metric) * len(args.docking_programs) * 7
+        args.pose_selection) * len(args.docking_programs) * 7
     print(
         f"WARNING : At least {possibilites} possible combinations will be tried for optimization, this may take a while."
     )

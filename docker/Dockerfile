@@ -48,8 +48,8 @@ RUN pip install torch -f https://data.pyg.org/whl/torch-2.0.0+${CUDA}.html \
 
 WORKDIR /home/$username
 
-RUN git clone https://gitlab.com/Tonylac77/DockM8 \
-    && rm /home/environment.yml \ 
-    && rm ~/mambaforge.sh \ 
+RUN git clone https://github.com/DrugBud-Suite/DockM8 \
+    && rm /home/environment.yml \
+    && rm ~/mambaforge.sh \
     && mamba clean -ya
 

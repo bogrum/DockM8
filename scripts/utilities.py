@@ -369,7 +369,6 @@ def parallel_executor(function, list_of_objects : list, ncpus : int, backend = '
         results = Parallel(n_jobs=ncpus)(tqdm(jobs, total=len(list_of_objects), desc=f"Running {function}"))
     
     if backend == 'pebble_process':
-        print(kwargs)
         with pebble.ProcessPool(max_workers=ncpus) as executor:
             jobs = [executor.schedule(function, args=(obj,), kwargs = kwargs) for obj in list_of_objects]
             results = [job.result() for job in jobs]

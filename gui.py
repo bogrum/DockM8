@@ -16,15 +16,16 @@ from scripts.rescoring_functions import RESCORING_FUNCTIONS
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-st.set_page_config(page_title="DockM8 v1.0.0", page_icon="./media/DockM8_logo.png", layout="wide")
+st.set_page_config(page_title="DockM8 v1.0.2", page_icon="./media/DockM8_logo.png", layout="wide")
 # Sidebar
 st.sidebar.image(image="./media/DockM8_white_horizontal.png", width=200)
 st.sidebar.title("DockM8")
 st.sidebar.subheader("Open-source consensus docking for everyone")
 st.sidebar.link_button("Github", url="https://github.com/DrugBud-Suite/DockM8")
 st.sidebar.link_button("Visit Website", url="https://drugbud-suite.github.io/dockm8-web/")
-st.sidebar.link_button("Publication", url="https://doi.org/your-doi")
-st.sidebar.link_button("Zenodo repository", url="https://doi.org/your-doi")
+# Uncomment when DOIs are available:
+# st.sidebar.link_button("Publication", url="https://doi.org/your-doi")
+# st.sidebar.link_button("Zenodo repository", url="https://doi.org/your-doi")
 
 # Logo
 st.columns(3)[1].image(image="./media/DockM8_white_vertical.png", width=400)
@@ -203,8 +204,8 @@ docking_programs = st.multiselect(
     "Choose the docking programs you want to use, multiple selection is allowed",
 )
 
-if "PLANTS" in docking_programs and not os.path.exists(
-        "/path/to/software/PLANTS"):
+plants_path = os.path.join(software, "PLANTS")
+if "PLANTS" in docking_programs and not os.path.exists(plants_path):
     st.warning(
         'PLANTS was not found in the software folder, please visit http://www.tcd.uni-konstanz.de/research/plants.php',
         icon=':warning:')
@@ -351,7 +352,6 @@ open("log.txt", "w").close()
 
 
 def run_dockm8(command_list):
-    print("Running")
     subprocess.Popen(command_list)
 
 
