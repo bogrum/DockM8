@@ -947,7 +947,7 @@ def qvina2_docking_splitted(split_file: Path, w_dir: Path,
                 with open(output_filename, 'w') as output_file:
                     output_file.writelines(model)
             os.remove(file)
-            qvina2_poses = pd.DataFrame(columns=['Pose ID', 'Molecule', 'QVINA2_Affinity'])
+        qvina2_poses = pd.DataFrame(columns=['Pose ID', 'Molecule', 'QVINA2_Affinity'])
         for pose_file in results_path.glob('*.pdbqt'):
             pdbqt_mol = PDBQTMolecule.from_file(pose_file, name=pose_file.stem, skip_typing=True)
             rdkit_mol = RDKitMolCreate.from_pdbqt_mol(pdbqt_mol)
@@ -961,11 +961,11 @@ def qvina2_docking_splitted(split_file: Path, w_dir: Path,
                 'QVINA2_Affinity': affinity,
                 'ID': pose_file.stem.split('_')[0]
             }
-            PandasTools.WriteSDF(qvina2_poses,
-                            str(qvina2_docking_results),
-                            molColName='Molecule',
-                            idName='Pose ID',
-                            properties=list(qvina2_poses.columns))
+        PandasTools.WriteSDF(qvina2_poses,
+                        str(qvina2_docking_results),
+                        molColName='Molecule',
+                        idName='Pose ID',
+                        properties=list(qvina2_poses.columns))
     except Exception as e:
         printlog('ERROR: Failed to combine QVINA2 SDF file!')
         printlog(e)
