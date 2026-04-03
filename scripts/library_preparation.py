@@ -47,14 +47,17 @@ def standardize_library(input_sdf: Path, output_dir: Path, id_column: str, ncpus
     # Load Original Library SDF into Pandas
     try:
         df = PandasTools.LoadSDF(str(input_sdf),
-                                idName=id_column,
+                                idName='ID',
                                 molColName='Molecule',
                                 includeFingerprints=False,
                                 embedProps=True,
                                 removeHs=True,
                                 strictParsing=True,
                                 smilesName='SMILES')
-        df.rename(columns={id_column: 'ID'}, inplace=True)
+        # FIX: idName='ID' puts _Name (empty for Enamine SDFs) in 'ID'.
+        # The actual Catalog_ID is read correctly as a regular SD property column.
+        # Overwrite 'ID' with the correct value from the id_column SD property.
+        df['ID'] = df[id_column]
         # Add 'DOCKM8-' in front of IDs that contain only numbers
         df['ID'] = ['DOCKM8-' + str(id) if str(id).isdigit() else id for id in df['ID']]
         # Replace underscore characters with hyphen in ID column
@@ -104,12 +107,15 @@ def conf_gen_RDKit(molecule):
     Returns:
         molecule (RDKit molecule): The molecule with 3D conformers.
     """
-    if not molecule.GetConformer().Is3D():
-        molecule = Chem.AddHs(molecule)
-        AllChem.EmbedMolecule(molecule)
-        AllChem.MMFFOptimizeMolecule(molecule)
-        AllChem.SanitizeMol(molecule)
-    return molecule
+    try:
+        if not molecule.GetConformer().Is3D():
+            molecule = Chem.AddHs(molecule)
+            AllChem.EmbedMolecule(molecule)
+            AllChem.MMFFOptimizeMolecule(molecule)
+            AllChem.SanitizeMol(molecule)
+        return molecule
+    except Exception:
+        return None
 def generate_conformers_RDKit(input_sdf: str, output_dir: str, ncpus: int):
     """
     Generates 3D conformers using RDKit.
@@ -132,12 +138,14 @@ def generate_conformers_RDKit(input_sdf: str, output_dir: str, ncpus: int):
         df = df.iloc[1:]  # Filter the dataframe to keep all rows except the first one
         with concurrent.futures.ProcessPoolExecutor(max_workers=ncpus) as executor:
             df['Molecule'] = list(tqdm(executor.map(conf_gen_RDKit, df['Molecule']), total=len(df['Molecule']), desc='Minimizing molecules', unit='mol'))
+        df = df[df['Molecule'].notna()].copy()
+        printlog(f'Conformer generation: {len(df)} molecules retained after filtering failures.')
 
         # Write the conformers to the output SDF file using PandasTools.WriteSDF()
         output_file = output_dir / 'gypsum_dl_success.sdf'
         PandasTools.WriteSDF(df, str(output_file), molColName='Molecule', idName='ID')
     except Exception as e:
-        printlog('ERROR: Failed to generate conformers using RDKit!' + e)
+        printlog('ERROR: Failed to generate conformers using RDKit! ' + str(e))
     return
 
 
