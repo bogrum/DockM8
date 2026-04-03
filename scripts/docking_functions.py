@@ -1111,9 +1111,8 @@ def docking(w_dir : str or Path, protein_file : str or Path, pocket_definition: 
                                                 strictParsing=True)
                         smina_dataframes.append(df)
                 smina_df = pd.concat(smina_dataframes)
-                list_ = [*range(1, int(n_poses) + 1, 1)]
-                ser = list_ * (len(smina_df) // len(list_))
-                smina_df['Pose ID'] = [f'{row["ID"]}_SMINA_{num}' for num, (_,row) in zip(ser + list_[ :len(smina_df) - len(ser)],smina_df.iterrows())]
+                smina_df['Pose ID'] = smina_df.groupby('ID').cumcount().add(1).astype(str)
+                smina_df['Pose ID'] = smina_df['ID'] + '_SMINA_' + smina_df['Pose ID']
                 smina_df.rename(columns={'minimizedAffinity': 'SMINA_Affinity'}, inplace=True)
             except Exception as e:
                 printlog('ERROR: Failed to Load SMINA poses SDF file!')
@@ -1153,9 +1152,8 @@ def docking(w_dir : str or Path, protein_file : str or Path, pocket_definition: 
                                                 strictParsing=True)
                         gnina_dataframes.append(df)
                 gnina_df = pd.concat(gnina_dataframes)
-                list_ = [*range(1, int(n_poses) + 1, 1)]
-                ser = list_ * (len(gnina_df) // len(list_))
-                gnina_df['Pose ID'] = [f'{row["ID"]}_GNINA_{num}' for num, (_, row) in zip( ser + list_[ :len(gnina_df) - len(ser)], gnina_df.iterrows())]
+                gnina_df['Pose ID'] = gnina_df.groupby('ID').cumcount().add(1).astype(str)
+                gnina_df['Pose ID'] = gnina_df['ID'] + '_GNINA_' + gnina_df['Pose ID']
                 gnina_df.rename(columns={'minimizedAffinity': 'GNINA_Affinity', 'CNNscore':'CNN-Score', 'CNNaffinity':'CNN-Affinity'}, inplace=True)
             except Exception as e:
                 printlog('ERROR: Failed to Load GNINA poses SDF file!')
