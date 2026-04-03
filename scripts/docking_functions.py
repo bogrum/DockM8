@@ -973,7 +973,160 @@ def qvina2_docking_splitted(split_file: Path, w_dir: Path,
         shutil.rmtree(qvina2_folder / Path(split_file).stem, ignore_errors=True)
     return qvina2_docking_results
 
-DOCKING_PROGRAMS = ['PLANTS', 'SMINA', 'GNINA', 'QVINA2', 'QVINAW']
+def _parse_dok_scores(dok_path: Path) -> list:
+    """Parse a LeDock .dok output file, return list of (score, pdb_lines) tuples."""
+    poses = []
+    with open(dok_path) as f:
+        content = f.read()
+    blocks = content.split('END\n')
+    for block in blocks:
+        if not block.strip():
+            continue
+        score = None
+        for line in block.splitlines():
+            if 'Score:' in line and 'kcal/mol' in line:
+                try:
+                    score = float(line.split('Score:')[1].split('kcal')[0].strip())
+                except Exception:
+                    pass
+        if score is not None:
+            poses.append((score, block + 'END\n'))
+    return poses
+
+
+def ledock_docking_splitted(split_file: Path, w_dir: Path, protein_file: str,
+                             pocket_definition: Dict[str, list], software: Path,
+                             n_poses: int) -> None:
+    """
+    Dock ligands from a split SDF file using LeDock.
+
+    Args:
+        split_file (Path): Path to the split SDF file.
+        w_dir (Path): Working directory.
+        protein_file (str): Path to the protein PDB file.
+        pocket_definition (Dict[str, list]): center and size of the binding pocket.
+        software (Path): Path to the directory containing the ledock binary.
+        n_poses (int): Number of binding poses to generate per ligand.
+    """
+    from rdkit import Chem
+
+    split_stem = Path(split_file).stem
+    ledock_folder = w_dir / 'ledock'
+    work_folder = ledock_folder / split_stem
+    mol2_folder = work_folder / 'mol2_files'
+    mol2_folder.mkdir(parents=True, exist_ok=True)
+
+    # Convert each molecule in the split SDF to an individual mol2 file via obabel CLI.
+    # Keep the original RDKit mol as template (preserves bond orders/aromaticity).
+    suppl = Chem.SDMolSupplier(str(split_file), removeHs=False, sanitize=True)
+    mol2_paths = []
+    template_mols = {}  # mol_id -> original RDKit mol
+    for mol in suppl:
+        if mol is None:
+            continue
+        mol_id = mol.GetProp('ID') if mol.HasProp('ID') else mol.GetProp('_Name')
+        tmp_sdf = mol2_folder / f'{mol_id}.sdf'
+        out_mol2 = mol2_folder / f'{mol_id}.mol2'
+        with open(tmp_sdf, 'w') as f:
+            f.write(Chem.MolToMolBlock(mol))
+        subprocess.call(
+            f'obabel {tmp_sdf} -omol2 -O {out_mol2} 2>/dev/null',
+            shell=True,
+        )
+        tmp_sdf.unlink(missing_ok=True)
+        if out_mol2.exists() and out_mol2.stat().st_size > 0:
+            mol2_paths.append(out_mol2)
+            template_mols[mol_id] = mol
+
+    if not mol2_paths:
+        printlog(f'LeDock: no molecules to dock in {split_file}')
+        return
+
+    # Write ligand list file
+    ligand_list_path = work_folder / 'ligand_list.txt'
+    with open(ligand_list_path, 'w') as f:
+        for p in mol2_paths:
+            f.write(str(p) + '\n')
+
+    # Pocket bounds from center + size
+    cx, cy, cz = pocket_definition['center']
+    sx, sy, sz = pocket_definition['size']
+
+    # Write LeDock config file
+    config_path = work_folder / f'{split_stem}.dok'
+    with open(config_path, 'w') as f:
+        f.write(f'Receptor\n{protein_file}\n\n')
+        f.write(f'RMSD\n1.0\n\n')
+        f.write(f'Binding pocket\n')
+        f.write(f'{cx - sx/2:.3f} {cx + sx/2:.3f}\n')
+        f.write(f'{cy - sy/2:.3f} {cy + sy/2:.3f}\n')
+        f.write(f'{cz - sz/2:.3f} {cz + sz/2:.3f}\n\n')
+        f.write(f'Number of binding poses\n{n_poses}\n\n')
+        f.write(f'Ligands list\n{ligand_list_path}\n\nEND\n')
+
+    # Run LeDock
+    try:
+        subprocess.call(
+            f'{software / "ledock"} {config_path}',
+            shell=True,
+            stdout=DEVNULL,
+            stderr=STDOUT,
+            cwd=str(work_folder),
+        )
+    except Exception as e:
+        printlog(f'LeDock docking failed: {e}')
+        return
+
+    # Parse .dok output files and build SDF
+    ledock_poses = pd.DataFrame(columns=['Pose ID', 'Molecule', 'LeDock_Score', 'ID'])
+
+    for mol2_path in mol2_paths:
+        dok_path = mol2_path.with_suffix('.dok')
+        if not dok_path.exists():
+            continue
+        mol_id = mol2_path.stem
+        poses = _parse_dok_scores(dok_path)
+
+        # Apply .dok coordinates to the original template mol (preserves bond orders)
+        # LeDock preserves input atom ordering, so coordinate mapping is direct.
+        template_mol = template_mols.get(mol_id)
+        if template_mol is None:
+            continue
+
+        for pose_num, (score, pdb_block) in enumerate(poses, 1):
+            try:
+                coords = []
+                for line in pdb_block.splitlines():
+                    if line.startswith(('ATOM', 'HETATM')):
+                        coords.append((float(line[30:38]), float(line[38:46]), float(line[46:54])))
+                if len(coords) != template_mol.GetNumAtoms():
+                    continue
+                from rdkit.Geometry import rdGeometry
+                from rdkit.Chem import RWMol
+                mol_with_pose = RWMol(Chem.Mol(template_mol))
+                conf = Chem.Conformer(mol_with_pose.GetNumAtoms())
+                for i, (x, y, z) in enumerate(coords):
+                    conf.SetAtomPosition(i, rdGeometry.Point3D(x, y, z))
+                mol_with_pose.AddConformer(conf, assignId=True)
+                ledock_poses.loc[len(ledock_poses)] = {
+                    'Pose ID': f'{mol_id}_LEDOCK_{pose_num}',
+                    'Molecule': mol_with_pose.GetMol(),
+                    'LeDock_Score': score,
+                    'ID': mol_id,
+                }
+            except Exception as e:
+                printlog(f'LeDock: failed to parse pose {pose_num} for {mol_id}: {e}')
+
+    results_path = ledock_folder / f'{split_stem}_ledock.sdf'
+    if not ledock_poses.empty:
+        PandasTools.WriteSDF(ledock_poses, str(results_path),
+                             molColName='Molecule', idName='Pose ID',
+                             properties=list(ledock_poses.columns))
+    shutil.rmtree(work_folder, ignore_errors=True)
+    return
+
+
+DOCKING_PROGRAMS = ['PLANTS', 'SMINA', 'GNINA', 'QVINA2', 'QVINAW', 'LEDOCK']
 def docking(w_dir : str or Path, protein_file : str or Path, pocket_definition: Dict[str, list], software : str or Path, docking_programs : list, exhaustiveness : int, n_poses : int, ncpus : int, job_manager='concurrent_process'):
     """
     Dock ligands into a protein binding site using one or more docking programs.
@@ -1247,6 +1400,48 @@ def docking(w_dir : str or Path, protein_file : str or Path, pocket_definition: 
                 printlog(e)
             else:
                 delete_files(w_dir / 'qvina2', 'qvina2_poses.sdf')
+        # Docking split files using LeDock
+        if 'LEDOCK' in docking_programs and not (w_dir / 'ledock').is_dir():
+            printlog('Docking split files using LeDock...')
+            tic = time.perf_counter()
+            (w_dir / 'ledock').mkdir(parents=True, exist_ok=True)
+            parallel_executor(ledock_docking_splitted, split_files_sdfs, ncpus, job_manager,
+                              w_dir=w_dir, protein_file=protein_file,
+                              pocket_definition=pocket_definition, software=software,
+                              n_poses=n_poses)
+            toc = time.perf_counter()
+            printlog(f'Docking with LeDock complete in {toc - tic:0.4f}!')
+        # Fetch LeDock poses
+        if 'LEDOCK' in docking_programs and (w_dir / 'ledock').is_dir() and not (w_dir / 'ledock' / 'ledock_poses.sdf').is_file():
+            try:
+                ledock_dataframes = []
+                for file in tqdm(os.listdir(w_dir / 'ledock'), desc='Loading LeDock poses'):
+                    if file.startswith('split') and file.endswith('.sdf'):
+                        df = PandasTools.LoadSDF(str(w_dir / 'ledock' / file),
+                                                 idName='ID',
+                                                 molColName='Molecule',
+                                                 includeFingerprints=False,
+                                                 embedProps=False,
+                                                 removeHs=False,
+                                                 strictParsing=True)
+                        ledock_dataframes.append(df)
+                ledock_df = pd.concat(ledock_dataframes)
+                ledock_df['Pose ID'] = ledock_df.groupby('ID').cumcount().add(1).astype(str)
+                ledock_df['Pose ID'] = ledock_df['ID'] + '_LEDOCK_' + ledock_df['Pose ID']
+            except Exception as e:
+                printlog('ERROR: Failed to load LeDock poses SDF file!')
+                printlog(e)
+            try:
+                PandasTools.WriteSDF(ledock_df,
+                                     str(w_dir / 'ledock' / 'ledock_poses.sdf'),
+                                     molColName='Molecule',
+                                     idName='Pose ID',
+                                     properties=list(ledock_df.columns))
+            except Exception as e:
+                printlog('ERROR: Failed to write combined LeDock poses SDF file!')
+                printlog(e)
+            else:
+                delete_files(w_dir / 'ledock', 'ledock_poses.sdf')
     shutil.rmtree(w_dir / 'split_final_library', ignore_errors=True)
     return
 
